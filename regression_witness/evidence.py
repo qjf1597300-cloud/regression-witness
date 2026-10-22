@@ -17,6 +17,13 @@ class EvidenceError(ValueError):
     """A report cannot be interpreted without risking misleading evidence."""
 
 
+class _NoDTDTreeBuilder(ET.TreeBuilder):
+    """Reject actual DTDs while allowing declaration text in logs/comments."""
+
+    def doctype(self, name, pubid, system):
+        raise EvidenceError("DOCTYPE and ENTITY declarations are not supported")
+
+
 def _tag(element: ET.Element) -> str:
     return element.tag.rsplit("}", 1)[-1]
 
@@ -37,13 +44,12 @@ def parse_junit(path: Path) -> dict:
         raise EvidenceError(f"Cannot read JUnit report: {exc}") from exc
     if len(raw) > MAX_REPORT_BYTES:
         raise EvidenceError("JUnit report exceeds the 10 MiB limit")
-    # Removing NULs also exposes these ASCII declarations in UTF-16/UTF-32.
-    declarations = raw.replace(b"\x00", b"").lower()
-    if re.search(br"<!\s*(?:doctype|entity)\b", declarations):
-        raise EvidenceError("DOCTYPE and ENTITY declarations are not supported")
     try:
-        root = ET.fromstring(raw)
-    except (ET.ParseError, ValueError) as exc:
+        parser = ET.XMLParser(target=_NoDTDTreeBuilder())
+        root = ET.fromstring(raw, parser=parser)
+    except EvidenceError:
+        raise
+    except (ET.ParseError, ValueError, LookupError) as exc:
         raise EvidenceError(f"Invalid JUnit XML: {exc}") from exc
     if _tag(root) not in {"testsuite", "testsuites"}:
         raise EvidenceError("JUnit root must be testsuite or testsuites")

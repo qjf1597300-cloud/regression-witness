@@ -8,6 +8,12 @@ A green test on a fixed revision does not show that the test detects the origina
 
 Built for local, trusted repositories. Capture reviewable evidence before merging a bug fix.
 
+## Maintenance update: v0.1.1
+
+- JUnit logs and XML comments can contain literal `<!DOCTYPE ...>` or `<!ENTITY ...>` text without rejecting an otherwise valid report. Actual DTD declarations remain unsupported and are rejected by the XML parser.
+- Unknown XML encoding declarations now produce the documented CLI exit code `2` and an actionable error instead of an uncaught traceback.
+- Regression coverage includes UTF-8 and UTF-16 reports, internal and external DTD declarations, and the CLI error path. No runtime dependencies were added.
+
 ## Try the demo
 
 Requirements: **Python 3.10+ and Git 2.31+**. The tool itself uses only the Python standard library. macOS and Linux are the intended platforms; Windows has not been verified.
