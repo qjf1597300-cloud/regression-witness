@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "regression-witness"
-version = "0.1.0"
+version = "0.1.1"
 description = "Reproducible before/after test evidence for open-source pull request reviews."
 readme = "README.md"
 requires-python = ">=3.10"

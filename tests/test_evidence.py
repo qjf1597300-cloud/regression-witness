@@ -1,9 +1,12 @@
 """Counterexamples that must never be presented as regression-fix evidence."""
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
 from pathlib import Path
 import tempfile
 import unittest
 
+from regression_witness.__main__ import main
 from regression_witness.evidence import EvidenceError, MAX_REPORT_BYTES, evaluate, parse_junit
 
 
@@ -61,10 +64,51 @@ class JUnitEvidenceTests(unittest.TestCase):
         self.assertEqual(report["cases"]["::x"]["message"], "first\nsecond")
 
     def test_rejects_dtd_in_utf8_and_utf16(self):
-        xml = '<!DOCTYPE testsuite [<!ENTITY x "expanded">]><testsuite><testcase name="x"><failure>&x;</failure></testcase></testsuite>'
-        for encoding in ("utf-8", "utf-16"):
-            with self.subTest(encoding=encoding), self.assertRaisesRegex(EvidenceError, "DOCTYPE"):
-                self.parse(xml.encode(encoding))
+        documents = (
+            '<!DOCTYPE testsuite [<!ENTITY x "expanded">]><testsuite><testcase name="x"><failure>&x;</failure></testcase></testsuite>',
+            '<!DOCTYPE testsuite><testsuite><testcase name="x"/></testsuite>',
+            '<!DOCTYPE testsuite SYSTEM "unused.dtd"><testsuite><testcase name="x"/></testsuite>',
+        )
+        for xml in documents:
+            for encoding in ("utf-8", "utf-16"):
+                with self.subTest(xml=xml, encoding=encoding), self.assertRaisesRegex(EvidenceError, "DOCTYPE"):
+                    self.parse(xml.encode(encoding))
+
+    def test_declaration_text_in_cdata_and_comments_is_not_a_dtd(self):
+        text = '<!DOCTYPE sample [<!ENTITY value "literal text">]>'
+        fragments = (
+            '<system-out><![CDATA[' + text + ']]></system-out>',
+            '<!-- ' + text + ' -->',
+        )
+        for fragment in fragments:
+            xml = '<testsuite tests="1"><testcase name="x"/>' + fragment + '</testsuite>'
+            for encoding in ("utf-8", "utf-16"):
+                with self.subTest(fragment=fragment, encoding=encoding):
+                    parsed = self.parse(xml.encode(encoding))
+                    self.assertEqual(parsed["cases"]["::x"]["status"], "passed")
+                    self.assertEqual(parsed["issues"], [])
+
+    def test_unknown_xml_encoding_is_an_evidence_error(self):
+        xml = b'<?xml version="1.0" encoding="definitely-unknown-codec"?><testsuite><testcase name="x"/></testsuite>'
+        with self.assertRaisesRegex(EvidenceError, "unknown encoding"):
+            self.parse(xml)
+
+    def test_compare_unknown_xml_encoding_returns_two_without_traceback(self):
+        self.parse('<testsuite><testcase name="x"><failure/></testcase></testsuite>')
+        after = Path(self.directory.name) / "after.xml"
+        after.write_bytes(b'<?xml version="1.0" encoding="definitely-unknown-codec"?><testsuite><testcase name="x"/></testsuite>')
+        output = Path(self.directory.name) / "comparison"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = main([
+                "compare", "--before", str(self.path), "--after", str(after),
+                "--test", "::x", "--output", str(output),
+            ])
+        self.assertEqual(status, 2)
+        self.assertIn("unknown encoding", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertFalse(output.exists())
 
     def test_rejects_oversized_report(self):
         with self.assertRaisesRegex(EvidenceError, "10 MiB"):
